@@ -540,6 +540,9 @@ def _load_root_package_json(priv, rctx, label_store):
 def _should_update_pnpm_lock(priv):
     return priv["should_update_pnpm_lock"]
 
+def _frozen_pnpm_lock(priv):
+    return priv["frozen_pnpm_lock"]
+
 def _default_registry(priv):
     return priv["default_registry"]
 
@@ -587,6 +590,7 @@ def _new(rctx):
         "packages": {},
         "root_package": None,
         "should_update_pnpm_lock": should_update_pnpm_lock,
+        "frozen_pnpm_lock": rctx.attr.frozen_pnpm_lock,
     }
 
     _init(priv, rctx, label_store)
@@ -594,6 +598,7 @@ def _new(rctx):
     return struct(
         label_store = label_store,  # pass-through access to the label store
         should_update_pnpm_lock = lambda: _should_update_pnpm_lock(priv),
+        frozen_pnpm_lock = lambda: _frozen_pnpm_lock(priv),
         default_registry = lambda: _default_registry(priv),
         link_workspace = lambda: _link_workspace(priv),
         importers = lambda: _importers(priv),

@@ -75,6 +75,7 @@ _ATTRS = {
     "verify_patches": attr.label(),
     "npm_package_target_name": attr.string(),
     "yarn_lock": attr.label(),
+    "frozen_pnpm_lock": attr.bool(default = False),
 }
 
 npm_translate_lock_lib = struct(
@@ -91,11 +92,14 @@ def _npm_translate_lock_impl(rctx):
     # import` in the user's repository
     if not rctx.attr.pnpm_lock:
         _bootstrap_import(rctx, state)
+    if state.frozen_pnpm_lock():
+        _copy_pnpm_lock_to_bazel_bin(rctx, state)
 
     if state.should_update_pnpm_lock():
         # Run `pnpm install --lockfile-only` or `pnpm import` if its inputs have changed since last update
         if state.action_cache_miss():
             _fail_if_frozen_pnpm_lock(rctx, state)
+
             if _update_pnpm_lock(rctx, state):
                 # If the pnpm lock file was changed then reload it before translation
                 state.reload_lockfile()
@@ -139,6 +143,7 @@ def npm_translate_lock(
         pnpm_lock = None,
         npm_package_lock = None,
         yarn_lock = None,
+        frozen_pnpm_lock = False,
         update_pnpm_lock = None,
         update_pnpm_lock_node_toolchain_prefix = "nodejs",
         preupdate = [],
@@ -528,6 +533,7 @@ WARNING: `package_json` attribute in `npm_translate_lock(name = "{name}")` is de
         pnpm_lock = pnpm_lock,
         npm_package_lock = npm_package_lock,
         yarn_lock = yarn_lock,
+        frozen_pnpm_lock = frozen_pnpm_lock,
         update_pnpm_lock = update_pnpm_lock,
         npmrc = npmrc,
         use_home_npmrc = use_home_npmrc,
@@ -695,6 +701,13 @@ STDERR:
             )
             fail(msg)
 
+def _get_update_cmd(import_lock = False, frozen_lock = False):
+    if import_lock:
+        return ["import"]
+    if frozen_lock:
+        return ["install", "--lockfile-only", "--frozen-lockfile"]
+    return ["install", "--lockfile-only"]
+
 ################################################################################
 def _update_pnpm_lock(rctx, state):
     _execute_preupdate_scripts(rctx, state)
@@ -702,7 +715,10 @@ def _update_pnpm_lock(rctx, state):
     pnpm_lock_label = state.label_store.label("pnpm_lock")
     pnpm_lock_relative_path = state.label_store.relative_path("pnpm_lock")
 
-    update_cmd = ["import"] if rctx.attr.npm_package_lock or rctx.attr.yarn_lock else ["install", "--lockfile-only"]
+    update_cmd = _get_update_cmd(
+        import_lock = rctx.attr.npm_package_lock or rctx.attr.yarn_lock,
+        frozen_lock = state.frozen_pnpm_lock(),
+    )
     update_working_directory = paths.dirname(state.label_store.repository_path("pnpm_lock"))
 
     pnpm_cmd = " ".join(update_cmd)
@@ -774,6 +790,24 @@ INFO: {} file has changed""".format(pnpm_lock_relative_path))
     state.write_action_cache()
 
     return lockfile_changed
+
+################################################################################
+def _copy_pnpm_lock_to_bazel_bin(rctx, state):
+    workspace_file = rctx.attr.pnpm_lock
+    bazel_bin_file = state.label_store.relative_path("pnpm_lock")
+    bootstrap_working_directory = paths.dirname(bazel_bin_file)
+
+    rctx.report_progress("Copying pnpm-lock.yaml file with `pnpm import` from workspace")
+
+    result = rctx.execute(
+        [
+            "cp",
+            workspace_file,
+            bazel_bin_file,
+        ],
+        working_directory = bootstrap_working_directory,
+        quiet = rctx.attr.quiet,
+    )
 
 ################################################################################
 def _fail_if_frozen_pnpm_lock(rctx, state):
